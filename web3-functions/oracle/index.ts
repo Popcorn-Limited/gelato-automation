@@ -2,62 +2,43 @@ import {
   Web3Function,
   Web3FunctionContext,
 } from "@gelatonetwork/web3-functions-sdk";
-import { Contract } from "@ethersproject/contracts";
-import ky from "ky"; // we recommend using ky as axios doesn't support fetch by default
-
-const ORACLE_ABI = [
-  "function lastUpdated() external view returns(uint256)",
-  "function updatePrice(uint256)",
-];
+import { createPublicClient, encodeFunctionData, http } from 'viem'
+import { mainnet } from "viem/chains";
 
 Web3Function.onRun(async (context: Web3FunctionContext) => {
-  const { userArgs, multiChainProvider } = context;
+  const alchemyKey = await context.secrets.get("ALCHEMY_KEY");
+  const pushOracleOwner = await context.secrets.get("PUSH_ORACLE_OWNER");
 
-  const provider = multiChainProvider.default();
-  // Retrieve Last oracle update time
-  const oracleAddress =
-    (userArgs.oracle as string) ?? "0x71B9B0F6C999CBbB0FeF9c92B80D54e4973214da";
-  let lastUpdated;
-  let oracle;
-  try {
-    oracle = new Contract(oracleAddress, ORACLE_ABI, provider);
-    lastUpdated = parseInt(await oracle.lastUpdated());
-    console.log(`Last oracle update: ${lastUpdated}`);
-  } catch (err) {
-    return { canExec: false, message: `Rpc call failed` };
-  }
-
-  // Check if it's ready for a new update
-  const nextUpdateTime = lastUpdated + 3600; // 1h
-  const timestamp = (await provider.getBlock("latest")).timestamp;
-  console.log(`Next oracle update: ${nextUpdateTime}`);
-  if (timestamp < nextUpdateTime) {
-    return { canExec: false, message: `Time not elapsed` };
-  }
+  // Initialize viem client with the extracted URL
+  const ethereumRpc = createPublicClient({
+    chain: mainnet,
+    transport: http(`https://eth-mainnet.alchemyapi.io/v2/${alchemyKey}`),
+  });
 
   // Get current price on coingecko
-  const currency = (userArgs.currency as string) ?? "ethereum";
-  let price = 0;
-  try {
-    const coingeckoApi = `https://api.coingecko.com/api/v3/simple/price?ids=${currency}&vs_currencies=usd`;
-
-    const priceData: { [key: string]: { usd: number } } = await ky
-      .get(coingeckoApi, { timeout: 5_000, retry: 0 })
-      .json();
-    price = Math.floor(priceData[currency].usd);
-  } catch (err) {
-    return { canExec: false, message: `Coingecko call failed` };
-  }
-  console.log(`Updating price: ${price}`);
+  const price = await ethereumRpc.readContract({
+    address: "0xe2871224b413F55c5a2Fd21E49bD63A52e339b03",
+    abi: oracleAbi,
+    functionName: "getPrice",
+  });
 
   // Return execution call data
   return {
     canExec: true,
     callData: [
       {
-        to: oracleAddress,
-        data: oracle.interface.encodeFunctionData("updatePrice", [price]),
+        to: pushOracleOwner,
+        data: encodeFunctionData({
+          abi: oracleOwnerAbi,
+          functionName: 'setPrice',
+          args: [price]
+        }),
       },
     ],
   };
 });
+
+
+const oracleAbi = [{ "inputs": [{ "internalType": "address", "name": "_owner", "type": "address" }], "stateMutability": "nonpayable", "type": "constructor" }, { "anonymous": false, "inputs": [{ "indexed": true, "internalType": "address", "name": "user", "type": "address" }, { "indexed": true, "internalType": "address", "name": "newOwner", "type": "address" }], "name": "OwnershipTransferred", "type": "event" }, { "anonymous": false, "inputs": [{ "indexed": false, "internalType": "uint256", "name": "oldPrice", "type": "uint256" }, { "indexed": false, "internalType": "uint256", "name": "newPrice", "type": "uint256" }], "name": "PriceUpdate", "type": "event" }, { "inputs": [], "name": "getPrice", "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }], "stateMutability": "view", "type": "function" }, { "inputs": [], "name": "owner", "outputs": [{ "internalType": "address", "name": "", "type": "address" }], "stateMutability": "view", "type": "function" }, { "inputs": [{ "internalType": "uint256", "name": "_price", "type": "uint256" }], "name": "setPrice", "outputs": [], "stateMutability": "nonpayable", "type": "function" }, { "inputs": [{ "internalType": "address", "name": "newOwner", "type": "address" }], "name": "transferOwnership", "outputs": [], "stateMutability": "nonpayable", "type": "function" }] as const
+
+const oracleOwnerAbi = [{ "inputs": [{ "internalType": "address", "name": "_oracle", "type": "address" }, { "internalType": "address", "name": "_owner", "type": "address" }], "stateMutability": "nonpayable", "type": "constructor" }, { "inputs": [], "name": "NotKeeperNorOwner", "type": "error" }, { "anonymous": false, "inputs": [{ "indexed": false, "internalType": "address", "name": "previous", "type": "address" }, { "indexed": false, "internalType": "address", "name": "current", "type": "address" }], "name": "KeeperUpdated", "type": "event" }, { "anonymous": false, "inputs": [{ "indexed": true, "internalType": "address", "name": "user", "type": "address" }, { "indexed": true, "internalType": "address", "name": "newOwner", "type": "address" }], "name": "OwnershipTransferred", "type": "event" }, { "inputs": [], "name": "keeper", "outputs": [{ "internalType": "address", "name": "", "type": "address" }], "stateMutability": "view", "type": "function" }, { "inputs": [], "name": "oracle", "outputs": [{ "internalType": "contract IPushOracle", "name": "", "type": "address" }], "stateMutability": "view", "type": "function" }, { "inputs": [], "name": "owner", "outputs": [{ "internalType": "address", "name": "", "type": "address" }], "stateMutability": "view", "type": "function" }, { "inputs": [{ "internalType": "address", "name": "_keeper", "type": "address" }], "name": "setKeeper", "outputs": [], "stateMutability": "nonpayable", "type": "function" }, { "inputs": [{ "internalType": "uint256", "name": "_price", "type": "uint256" }], "name": "setPrice", "outputs": [], "stateMutability": "nonpayable", "type": "function" }, { "inputs": [{ "internalType": "address", "name": "newOwner", "type": "address" }], "name": "transferOwnership", "outputs": [], "stateMutability": "nonpayable", "type": "function" }] as const

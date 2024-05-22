@@ -41,6 +41,7 @@
     "@gelatonetwork/web3-functions-sdk": "^2.1.9",
     "dotenv": "^16.0.3",
     "ky": "^0.32.2",
-    "octokit": "^2.0.19"
+    "octokit": "^2.0.19",
+    "viem": "^2.12.0"
   }
 }
