@@ -8,8 +8,15 @@ Web3Function.onRun(async (context: Web3FunctionContext) => {
   const rootGauges = await context.secrets.get("ROOT_GAUGES");
   const gasValue = await context.secrets.get("GAS_VALUE");
 
+  console.log(
+    {
+      gauges: rootGauges.split(","),
+      value: parseEther(gasValue).toString()
+    }
+  )
+
   return {
-    canExec: true,
+    canExec: false,
     callData: [
       {
         to: "0x6aa03ebAb1e9CB8d44Fd79153d3a258FFd48169A",
@@ -17,8 +24,8 @@ Web3Function.onRun(async (context: Web3FunctionContext) => {
           abi: RootGaugeFactoryAbi,
           functionName: 'transmit_emissions_multiple',
           args: [rootGauges.split(",")],
-          value: parseEther(gasValue)
         }),
+        value: parseEther(gasValue).toString()
       },
     ],
   };
