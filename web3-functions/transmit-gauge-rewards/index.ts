@@ -16,7 +16,7 @@ Web3Function.onRun(async (context: Web3FunctionContext) => {
   )
 
   return {
-    canExec: false,
+    canExec: true,
     callData: [
       {
         to: "0x6aa03ebAb1e9CB8d44Fd79153d3a258FFd48169A",
