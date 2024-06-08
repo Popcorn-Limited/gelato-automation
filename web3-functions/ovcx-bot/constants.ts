@@ -1,0 +1,10 @@
+import type { Address, Hash } from "viem";
+
+
+export const BOT: Address = "0xeEc0AF29301d99e2b63E52e3a6Ad72c62908d380";
+export const oVCX: Address = "0xaFa52E3860b4371ab9d8F08E801E9EA1027C0CA2";
+export const WETH: Address = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+export const VCX: Address = "0xcE246eEa10988C495B4A90a905Ee9237a0f91543";
+export const BALANCER_VAULT: Address = "0xBA12222222228d8Ba445958a75a0704d566BF2C8";
+export const BALANCER_QUERIES: Address = "0xE39B5e3B6D74016b2F6A9673D7d7493B6DF549d5";
+export const POOL_ID: Hash = "0x577a7f7ee659aa14dc16fd384b3f8078e23f1920000200000000000000000633";
