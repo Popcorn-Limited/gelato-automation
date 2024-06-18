@@ -33,7 +33,11 @@ describe("ovcx-bot test", () => {
                 chainId: 1,
                 gasPrice: parseUnits("100", "gwei").toString(),
             },
-            userArgs: {},
+            userArgs: {
+                users: [
+                    "0xeEc0AF29301d99e2b63E52e3a6Ad72c62908d380"
+                ]
+            },
         };
     }, 10000);
 

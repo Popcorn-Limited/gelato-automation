@@ -17,11 +17,13 @@ type ProcessedOrder = {
 };
 
 type ProcessedOrders = {
-  [orderUid: Hex]: ProcessedOrder;
+  [user: Address]: {
+    [orderUid: Hex]: ProcessedOrder;
+  };
 };
 
 Web3Function.onRun(async (context: Web3FunctionContext) => {
-  const { storage } = context;
+  const { userArgs, storage } = context;
 
   const alchemyKey = await context.secrets.get("ALCHEMY_KEY");
   const account = await context.secrets.get("ACCOUNT") as Address;
@@ -44,38 +46,44 @@ Web3Function.onRun(async (context: Web3FunctionContext) => {
   }
 
   const processedOrders = JSON.parse((await storage.get("processedOrders")) ?? "{}") as ProcessedOrders;
-  // orders are sorted from most recent to oldest.
-  const orders = await Cow.getOrders(BOT);
 
-  for (const order of orders) {
+  for (const user of userArgs.users as Address[]) {
+    const userProcessedOrders = processedOrders[user] || {};
+    // orders are sorted from most recent to oldest.
+    const orders = await Cow.getOrders(user);
+
+    for (const order of orders) {
     // order is already processed. Any order after this one is older
     // so we know that those are processed as well. We can stop the execution.
-    if (processedOrders[order.uid]) {
-      break;
-    }
-    // we only care about orders where the user sells VCX
-    if (order.sellToken !== VCX || order.status !== "fulfilled") {
-      processedOrders[order.uid] = {
+      if (userProcessedOrders[order.uid]) {
+        break;
+      }
+      // we only care about orders where the user sells VCX
+      if (order.sellToken !== VCX || order.status !== "fulfilled") {
+        userProcessedOrders[order.uid] = {
+          orderUid: order.uid,
+          ignored: true,
+        };
+      }
+      const swap = {
+        poolId: POOL_ID,
+        kind: SwapKind.GIVEN_OUT,
+        assetIn: WETH,
+        assetOut: VCX,
+        amount: BigInt(order.sellAmount),
+        userData: zeroHash,
+      };
+
+      calldata.push(await balancer.getSwapCall(swap, undefined));
+
+      userProcessedOrders[order.uid] = {
         orderUid: order.uid,
-        ignored: true,
+        ignored: false,
       };
     }
-    const swap = {
-      poolId: POOL_ID,
-      kind: SwapKind.GIVEN_OUT,
-      assetIn: WETH,
-      assetOut: VCX,
-      amount: BigInt(order.sellAmount),
-      userData: zeroHash,
-    };
-
-    calldata.push(await balancer.getSwapCall(swap, undefined));
-
-    processedOrders[order.uid] = {
-      orderUid: order.uid,
-      ignored: false,
-    };
+    processedOrders[user] = userProcessedOrders;
   }
+
   await storage.set("processedOrders", JSON.stringify(processedOrders));
   // Return execution call data
   return {
