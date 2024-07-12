@@ -2,9 +2,9 @@ import {
   Web3Function,
   Web3FunctionContext,
 } from "@gelatonetwork/web3-functions-sdk";
-import { createPublicClient, http, maxUint256, zeroHash, type Address, type Hash, type Hex } from 'viem';
+import { createPublicClient, http, maxUint256, zeroHash, type Address, type Hex } from 'viem';
 import { mainnet } from "viem/chains";
-import { BALANCER_VAULT, BOT, POOL_ID, VCX, WETH } from "./constants.js";
+import { BALANCER_VAULT, POOL_ID, VCX, WETH } from "./constants.js";
 import * as Cow from "./cow.js";
 import { ERC20 } from "./erc20.js";
 import { Balancer, SwapKind } from "./balancer.js";
@@ -26,7 +26,8 @@ Web3Function.onRun(async (context: Web3FunctionContext) => {
   const { userArgs, storage } = context;
 
   const alchemyKey = await context.secrets.get("ALCHEMY_KEY");
-  const account = await context.secrets.get("ACCOUNT") as Address;
+  const account = userArgs.account as Address;
+  const recipient = userArgs.recipient as Address;
 
   // Initialize viem client with the extracted URL
   const publicClient = createPublicClient({
@@ -35,14 +36,20 @@ Web3Function.onRun(async (context: Web3FunctionContext) => {
   });
 
   const erc20 = new ERC20(account, publicClient);
-  const balancer = new Balancer(account, publicClient);
+  const balancer = new Balancer(account, recipient, publicClient);
 
   const calldata: Call[] = [];
 
   // first time we execute this, we need to approve the Balancer Vault to spend our WETH
-  const allowance = await erc20.getAllowance(WETH, BALANCER_VAULT);
-  if (allowance === BigInt(0)) {
+  const vaultAllowance = await erc20.getAllowance(WETH, BALANCER_VAULT);
+  if (vaultAllowance === BigInt(0)) {
     calldata.push(erc20.getApproveCall(WETH, BALANCER_VAULT, maxUint256));
+  }
+
+  // this way the recipient EOA can transfer out all the WETH at any time
+  const recipientAllowance = await erc20.getAllowance(WETH, recipient);
+  if (recipientAllowance === BigInt(0)) {
+    calldata.push(erc20.getApproveCall(WETH, recipient, maxUint256));
   }
 
   const processedOrders = JSON.parse((await storage.get("processedOrders")) ?? "{}") as ProcessedOrders;

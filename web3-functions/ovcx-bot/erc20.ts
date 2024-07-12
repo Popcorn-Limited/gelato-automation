@@ -1,4 +1,4 @@
-import { encodeFunctionData, type Account, type Address, type PublicClient } from "viem";
+import { encodeFunctionData, type Address, type PublicClient } from "viem";
 import { ERC20_ABI } from "./abis/erc20_abi.js";
 import type { Call } from "./types.js";
 
@@ -22,7 +22,6 @@ export class ERC20 {
         });
     };
 
-
     getApproveCall(token: Address, spender: Address, amount: bigint): Call {
         return {
             to: token,
@@ -34,3 +33,4 @@ export class ERC20 {
         };
     }
 }
+

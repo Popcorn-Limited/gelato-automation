@@ -36,7 +36,9 @@ describe("ovcx-bot test", () => {
             userArgs: {
                 users: [
                     "0xeEc0AF29301d99e2b63E52e3a6Ad72c62908d380"
-                ]
+                ],
+                account: "0x770F4e38615e24E9E438b30CFaBf411ec499f9B6",
+                recipient: "0x770F4e38615e24E9E438b30CFaBf411ec499f9B6",
             },
         };
     }, 10000);

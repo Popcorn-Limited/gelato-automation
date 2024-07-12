@@ -1,4 +1,4 @@
-import { type Account, type PublicClient, type Address, type Hash, type Hex, encodeFunctionData } from "viem";
+import { type PublicClient, type Address, type Hash, type Hex, encodeFunctionData } from "viem";
 import { BALANCER_VAULT_ABI } from "./abis/balancer_vault_abi.js";
 import { BALANCER_VAULT, BALANCER_QUERIES } from "./constants.js";
 import { BALANCER_QUERIES_ABI } from "./abis/balancer_queries_abi.js";
@@ -9,15 +9,16 @@ export class Balancer {
 
     private defaultFundManagement: FundManagement;
     constructor(
-        account: Address,
+        sender: Address,
+        recipient: Address,
         publicClient: PublicClient,
     ) {
         this.publicClient = publicClient;
 
         this.defaultFundManagement = {
-            sender: account,
+            sender,
+            recipient,
             fromInternalBalance: false,
-            recipient: account,
             toInternalBalance: false,
         };
     }

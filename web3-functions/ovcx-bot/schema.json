@@ -4,6 +4,8 @@
   "memory": 128,
   "timeout": 30,
   "userArgs": {
-    "users": "string[]"
+    "users": "string[]",
+    "account": "string",
+    "recipient": "string"
   }
 }
