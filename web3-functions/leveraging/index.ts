@@ -62,7 +62,7 @@ Web3Function.onRun(async (context: Web3FunctionContext) => {
       abi: strategyAbi,
       functionName: "getLTV",
     });
-    
+
     // ltv on track
     if (targetLTV <= currentLTV < maxLTV) return {
       canExec: false,
@@ -113,7 +113,7 @@ Web3Function.onRun(async (context: Web3FunctionContext) => {
 
 const strategyAbi = [
   { "inputs": [], "name": "adjustLeverage", "outputs": [], "stateMutability": "nonpayable", "type": "function" },
-  { "inputs": [], "name:": "getLTV", "outputs": [{ "internalType": "uint256", "name": "ltv", "type": "uint256" }], "stateMutability": "view", "type": "function" },
+  { "inputs": [], "name": "getLTV", "outputs": [{ "internalType": "uint256", "name": "ltv", "type": "uint256" }], "stateMutability": "view", "type": "function" },
   { "inputs": [], "name": "maxLTV", "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }], "stateMutability": "view", "type": "function" },
   { "inputs": [], "name": "targetLTV", "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }], "stateMutability": "view", "type": "function" }
 ] as const
