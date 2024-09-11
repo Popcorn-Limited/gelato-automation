@@ -35,7 +35,7 @@ Web3Function.onRun(async (context: Web3FunctionContext) => {
   }
 
   // Initiate Client
-  const { storage, multiChainProvider } = context;
+  const { multiChainProvider } = context;
   const chainId = multiChainProvider.default()._network.chainId;
   const client = createPublicClient({
     chain: NetworkByChainId[chainId],
