@@ -26,11 +26,10 @@ Web3Function.onRun(async (context: Web3FunctionContext) => {
   const strategy = getAddress(await context.secrets.get("STRATEGY") || zeroAddress);
 
   // Should be the fixed gelato address for this task
-  const caller = getAddress(await context.secrets.get("CALLER") || zeroAddress);
   const maxGas = BigInt(await context.secrets.get("MAX_GAS") || "0");
 
   // Check env variables set
-  if (strategy === zeroAddress || caller === zeroAddress || maxGas === BigInt("0")) return {
+  if (strategy === zeroAddress || maxGas === BigInt("0")) return {
     canExec: false,
     callData: []
   }
@@ -41,43 +40,58 @@ Web3Function.onRun(async (context: Web3FunctionContext) => {
   const client = createPublicClient({
     chain: NetworkByChainId[chainId],
     transport: http(`${RPC_URLS[chainId]}${alchemyKey}`),
+    batch: {
+      multicall: true,
+    }
   });
 
   // verify trigger conditions
-  const verifyLTV = async () => {
-    const maxLTV = await client.readContract({
-      address: strategy,
-      abi: strategyAbi,
-      functionName: "maxLTV",
+  const verifyLTV = async (): Promise<boolean> => {
+    const results = await client.multicall({
+      contracts: [
+        {
+          address: strategy,
+          abi: strategyAbi,
+          functionName: "maxLTV",
+        },
+        {
+          address: strategy,
+          abi: strategyAbi,
+          functionName: "targetLTV",
+        },
+        {
+          address: strategy,
+          abi: strategyAbi,
+          functionName: "getLTV",
+        }
+      ]
     });
 
-    const targetLTV = await client.readContract({
-      address: strategy,
-      abi: strategyAbi,
-      functionName: "targetLTV",
-    });
-
-    const currentLTV = await client.readContract({
-      address: strategy,
-      abi: strategyAbi,
-      functionName: "getLTV",
-    });
+    const maxLTV = results[0].result ?? parseInt("0");
+    const targetLTV = results[1].result ?? parseInt("0");
+    const currentLTV = results[2].result ?? parseInt("0");
 
     // ltv on track
-    if (targetLTV <= currentLTV < maxLTV) return {
-      canExec: false,
-      callData: []
-    }
+    if ((targetLTV <= currentLTV) && (currentLTV < maxLTV))
+      return true;
+
+    return false;
   }
 
-  await verifyLTV();
+  const goodLTV = await verifyLTV();
+
+  // no need to adjust
+  if (goodLTV)
+    return {
+      canExec: false,
+      callData: [],
+    }
 
   // Check Gas Threshold
   const estimatedGas = await client.estimateContractGas({
     address: strategy,
     abi: strategyAbi,
     functionName: "adjustLeverage",
-    account: caller
   })
 
   let estimatedGasPrice = BigInt(0)
