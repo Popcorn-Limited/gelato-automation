@@ -2,7 +2,7 @@ import {
   Web3Function,
   Web3FunctionContext,
 } from "@gelatonetwork/web3-functions-sdk";
-import { Address, Chain, createPublicClient, encodeFunctionData, getAddress, http, zeroAddress } from 'viem'
+import { Address, Chain, createPublicClient, encodeFunctionData, getAddress, http, PublicClient, zeroAddress } from 'viem'
 import { arbitrum, mainnet, optimism, polygon } from "viem/chains";
 
 export const NetworkByChainId: { [key: number]: Chain } = {
@@ -21,6 +21,40 @@ const RPC_URLS: { [key: number]: string } = {
 
 const LEGACY_CHAINS: number[] = [polygon.id]
 
+async function verifyLTV(client: PublicClient, strategy: Address): Promise<boolean> {
+  const results = await client.multicall({
+    contracts: [
+      {
+        address: strategy,
+        abi: strategyAbi,
+        functionName: "maxLTV",
+      },
+      {
+        address: strategy,
+        abi: strategyAbi,
+        functionName: "targetLTV",
+      },
+      {
+        address: strategy,
+        abi: strategyAbi,
+        functionName: "getLTV",
+      }
+    ]
+  });
+  console.log("fetched ltv")
+
+  const maxLTV = results[0].result ?? parseInt("0");
+  const targetLTV = results[1].result ?? parseInt("0");
+  const currentLTV = results[2].result ?? parseInt("0");
+  console.log({ maxLTV, targetLTV, currentLTV })
+
+  // ltv on track
+  if ((targetLTV <= currentLTV) && (currentLTV < maxLTV))
+    return true;
+
+  return false;
+}
+
 Web3Function.onRun(async (context: Web3FunctionContext) => {
   const alchemyKey = await context.secrets.get("ALCHEMY_KEY");
   const strategy = getAddress(await context.secrets.get("STRATEGY") || zeroAddress);
@@ -28,10 +62,15 @@ Web3Function.onRun(async (context: Web3FunctionContext) => {
   // Should be the fixed gelato address for this task
   const maxGas = BigInt(await context.secrets.get("MAX_GAS") || "0");
 
+  console.log({ alchemyKey, strategy, maxGas })
+
   // Check env variables set
-  if (strategy === zeroAddress || maxGas === BigInt("0")) return {
-    canExec: false,
-    callData: []
+  if (strategy === zeroAddress || maxGas === BigInt("0")) {
+    console.log("ERROR: ENV")
+    return {
+      canExec: false,
+      callData: []
+    }
   }
 
   // Initiate Client
@@ -44,71 +83,51 @@ Web3Function.onRun(async (context: Web3FunctionContext) => {
       multicall: true,
     }
   });
+  console.log("Set up basics")
 
   // verify trigger conditions
-  const verifyLTV = async (): Promise<boolean> => {
-    const results = await client.multicall({
-      contracts: [
-        {
-          address: strategy,
-          abi: strategyAbi,
-          functionName: "maxLTV",
-        },
-        {
-          address: strategy,
-          abi: strategyAbi,
-          functionName: "targetLTV",
-        },
-        {
-          address: strategy,
-          abi: strategyAbi,
-          functionName: "getLTV",
-        }
-      ]
-    });
-
-    const maxLTV = results[0].result ?? parseInt("0");
-    const targetLTV = results[1].result ?? parseInt("0");
-    const currentLTV = results[2].result ?? parseInt("0");
-
-    // ltv on track
-    if ((targetLTV <= currentLTV) && (currentLTV < maxLTV))
-      return true;
-
-    return false;
-  }
-
-  const goodLTV = await verifyLTV();
+  const goodLTV = await verifyLTV(client, strategy);
 
   // no need to adjust
-  if (goodLTV)
+  if (goodLTV) {
+    console.log("ERROR: LTV")
     return {
       canExec: false,
       callData: [],
     }
+  }
 
   // Check Gas Threshold
-  const estimatedGas = await client.estimateContractGas({
-    address: strategy,
-    abi: strategyAbi,
-    functionName: "adjustLeverage",
-  })
-
   let estimatedGasPrice = BigInt(0)
   if (LEGACY_CHAINS.includes(chainId)) {
     const { gasPrice } = await client.estimateFeesPerGas({ type: "legacy" })
-    estimatedGasPrice = estimatedGas * gasPrice!
+    estimatedGasPrice = await client.estimateContractGas({
+      address: strategy,
+      abi: strategyAbi,
+      functionName: "adjustLeverage",
+      gasPrice
+    })
   } else {
     const { maxFeePerGas, maxPriorityFeePerGas } = await client.estimateFeesPerGas()
-    estimatedGasPrice = (estimatedGas * maxFeePerGas!) + (estimatedGas * maxPriorityFeePerGas!)
+    estimatedGasPrice = await client.estimateContractGas({
+      address: strategy,
+      abi: strategyAbi,
+      functionName: "adjustLeverage",
+      maxFeePerGas,
+      maxPriorityFeePerGas
+    })
+  }
+  console.log("got gas price: ", estimatedGasPrice)
+
+  if (estimatedGasPrice > maxGas) {
+    console.log("ERROR: maxGas")
+    return {
+      canExec: false,
+      callData: []
+    }
   }
 
-  if (estimatedGasPrice > maxGas) return {
-    canExec: false,
-    callData: []
-  }
-
-
+  console.log("run")
   // Return execution call data
   return {
     canExec: true,

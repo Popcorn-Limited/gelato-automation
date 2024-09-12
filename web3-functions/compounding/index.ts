@@ -52,23 +52,26 @@ Web3Function.onRun(async (context: Web3FunctionContext) => {
     canExec: false,
     callData: []
   }
-
-
+  
   // Check Gas Threshold
-  const estimatedGas = await client.estimateContractGas({
-    address: strategy,
-    abi: strategyAbi,
-    functionName: "harvest",
-    account: caller
-  })
-
   let estimatedGasPrice = BigInt(0)
   if (LEGACY_CHAINS.includes(chainId)) {
     const { gasPrice } = await client.estimateFeesPerGas({ type: "legacy" })
-    estimatedGasPrice = estimatedGas * gasPrice!
+    estimatedGasPrice = await client.estimateContractGas({
+      address: strategy,
+      abi: strategyAbi,
+      functionName: "harvest",
+      gasPrice
+    })
   } else {
     const { maxFeePerGas, maxPriorityFeePerGas } = await client.estimateFeesPerGas()
-    estimatedGasPrice = (estimatedGas * maxFeePerGas!) + (estimatedGas * maxPriorityFeePerGas!)
+    estimatedGasPrice = await client.estimateContractGas({
+      address: strategy,
+      abi: strategyAbi,
+      functionName: "harvest",
+      maxFeePerGas,
+      maxPriorityFeePerGas
+    })
   }
 
   if (estimatedGasPrice > maxGas) return {
