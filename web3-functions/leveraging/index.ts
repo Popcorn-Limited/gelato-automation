@@ -56,6 +56,7 @@ async function verifyLTV(client: PublicClient, strategy: Address): Promise<boole
 }
 
 Web3Function.onRun(async (context: Web3FunctionContext) => {
+  console.log("LEVERAGE 5X ETHX")
   const alchemyKey = await context.secrets.get("ALCHEMY_KEY");
   const strategy = getAddress(await context.secrets.get("STRATEGY") || zeroAddress);
 
