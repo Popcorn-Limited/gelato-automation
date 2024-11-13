@@ -2,7 +2,7 @@ import {
   Web3Function,
   Web3FunctionContext,
 } from "@gelatonetwork/web3-functions-sdk";
-import { Address, Chain, createPublicClient, encodeFunctionData, getAddress, http, zeroAddress } from 'viem'
+import { Address, Chain, createPublicClient, encodeFunctionData, erc20Abi, erc4626Abi, getAddress, http, parseEther, zeroAddress } from 'viem'
 import axios from "axios";
 import {
   arbitrum,
@@ -40,47 +40,15 @@ export const RPC_URLS: { [key: number]: string } = {
   [43114]: `https://avax-mainnet.g.alchemy.com/v2/`
 };
 
+const legacyChains = [196]
+
 // @ts-ignore
 Web3Function.onRun(async (context: Web3FunctionContext) => {
+  const vault = getAddress(await context.secrets.get("VAULT") || zeroAddress);
+  const owner = getAddress(await context.secrets.get("OWNER") || zeroAddress);
+  // const maxGas = BigInt(await context.secrets.get("MAX_GAS") || "0");
   const alchemyKey = await context.secrets.get("ALCHEMY_KEY");
-  const llamaKey = await context.secrets.get("DEFILLAMA_KEY");
-  const pushOracleOwner = getAddress(await context.secrets.get("PUSH_ORACLE_OWNER") || zeroAddress);
-  const network = await context.secrets.get("NETWORK");
 
-  // comma seperated addresses where the first address is the quote asset (asset) and the rest are the base assets (yieldToken)
-  const addressString = await context.secrets.get("ADDRESSES");
-  // spread object array as an inline-string [{bq:number,qb:number}] (spread can be positive or negative)
-  const spreadString = await context.secrets.get("SPREADS");
-  const maxGas = BigInt(await context.secrets.get("MAX_GAS") || "0");
-  // comma seperated chainIds
-  const legacyChainNumbers = await context.secrets.get("LEGACY_CHAINS");
-
-  console.log({ network, pushOracleOwner, addressString, spreadString, maxGas, legacyChainNumbers })
-
-  // Check env variables set for typing
-  if (!addressString || !spreadString || !legacyChainNumbers) {
-    console.log("ERROR: ENV")
-    return {
-      canExec: false,
-      callData: []
-    }
-  }
-
-  const addresses = addressString.split(",")
-  const spreads = JSON.parse(spreadString.replace(/(\w+):([-]?\d+(?:\.\d+)?)/g, '"$1":$2'));
-  const legacyChains = legacyChainNumbers.split(",").map(value => Number(value))
-
-  console.log({ addresses, spreads, legacyChains })
-
-  if (addresses.length - 1 !== spreads.length) {
-    console.log("ERROR: LENGHT")
-    return {
-      canExec: false,
-      callData: []
-    }
-  }
-
-  // Initiate Client
   console.log("INITIATING CLIENT")
   const { multiChainProvider } = context;
   const chainId = multiChainProvider.default()._network.chainId;
@@ -89,110 +57,95 @@ Web3Function.onRun(async (context: Web3FunctionContext) => {
     transport: chainId === 196 ? http(RPC_URLS[chainId]) : http(`${RPC_URLS[chainId]}${alchemyKey}`),
   });
 
-  console.log("LOADING DEFILLAMA PRICES")
-  console.log(`https://pro-api.llama.fi/${llamaKey}/coins/prices/current/${String(
-    addresses.map(
-      (address) => `${network}:${address}`
-    )
-  )}?searchWidth=4h`)
-  const { data: priceData } = await axios.get(
-    `https://pro-api.llama.fi/${llamaKey}/coins/prices/current/${String(
-      addresses.map(
-        (address) => `${network}:${address}`
-      )
-    )}?searchWidth=4h`
-  );
+  console.log(vault, chainId)
 
-  console.log("CALCULATING PRICES")
-  const assetPrice = priceData.coins[`${network}:${addresses[0]}`].price
-  const args: [Address, Address, bigint, bigint][] = addresses.slice(1).map((address, i) => {
-    const tokenPrice = priceData.coins[`${network}:${address}`].price
-    console.log({
-      address,
-      asset: assetPrice,
-      price: tokenPrice,
-      bq: tokenPrice / assetPrice,
-      bqWithSpread: (tokenPrice / assetPrice) * (1 + spreads[i].bq),
-      qb: assetPrice / tokenPrice,
-      qbWithSpread: (assetPrice / tokenPrice) * (1 + spreads[i].qb),
-      bqRaised: Math.floor(Number((tokenPrice / assetPrice) * 1e18)).toLocaleString("fullwide", { useGrouping: false }),
-      bqRaisedWithSpread: Math.floor(Number(((tokenPrice / assetPrice) * (1 + spreads[i].bq)) * 1e18)).toLocaleString("fullwide", { useGrouping: false }),
-      qbRaised: Math.floor(Number((assetPrice / tokenPrice) * 1e18)).toLocaleString("fullwide", { useGrouping: false }),
-      qbRaisedWithSpread: Math.floor(Number(((assetPrice / tokenPrice) * (1 + spreads[i].qb)) * 1e18)).toLocaleString("fullwide", { useGrouping: false }),
-    })
-    return [
-      getAddress(address), // base (yieldToken)
-      getAddress(addresses[0]), // quote (asset)
-      BigInt(Math.floor(Number(((tokenPrice / assetPrice) * (1 + spreads[i].bq)) * 1e18)).toLocaleString("fullwide", { useGrouping: false })), // bqPrice
-      BigInt(Math.floor(Number(((assetPrice / tokenPrice) * (1 + spreads[i].qb)) * 1e18)).toLocaleString("fullwide", { useGrouping: false }))  // qbPrice
-    ]
+  console.log("GETTING VAULT PRICE")
+  const { data: priceData } = await axios.get(`https://app.vaultcraft.io/api/vaultPrice/${vault}?chainId=${chainId}`)
+
+  console.log("GETTING VARIOUS DATA")
+  const mixRes = await client.multicall({
+    contracts: [{
+      address: owner,
+      abi: oracleOwnerAbi,
+      functionName: "keepers",
+      args: [vault]
+    },
+    {
+      address: vault,
+      abi: erc4626Abi,
+      functionName: "asset",
+    }]
   })
+  const keeper = mixRes[0].result as Address
+  const asset = mixRes[1].result as Address
 
+  // TODO readd later
   // Check Gas Threshold
-  console.log("CHECKING GAS THRESHOLD")
+  // console.log("CHECKING GAS THRESHOLD")
+  // let estimatedGasPrice = BigInt(0)
+  // if (legacyChains.includes(chainId)) {
+  //   const { gasPrice } = await client.estimateFeesPerGas({ type: "legacy" })
+  //   estimatedGasPrice = await client.estimateContractGas({
+  //     account: keeper,
+  //     address: owner,
+  //     abi: oracleOwnerAbi,
+  //     functionName: 'updatePrice',
+  //     args: [{
+  //       vault,
+  //       asset,
+  //       shareValueInAssets: BigInt(priceData.shareValueInAssets),
+  //       assetValueInShares: BigInt(priceData.assetValueInShares)
+  //     }],
+  //     gasPrice
+  //   })
+  // } else {
+  //   const { maxFeePerGas, maxPriorityFeePerGas } = await client.estimateFeesPerGas()
+  //   estimatedGasPrice = await client.estimateContractGas({
+  //     account: keeper,
+  //     address: owner,
+  //     abi: oracleOwnerAbi,
+  //     functionName: 'updatePrice',
+  //     args: [{
+  //       vault,
+  //       asset,
+  //       shareValueInAssets: BigInt(priceData.shareValueInAssets),
+  //       assetValueInShares: BigInt(priceData.assetValueInShares)
+  //     }], maxFeePerGas,
+  //     maxPriorityFeePerGas
+  //   })
+  // }
 
-  // Get owner of the push oracle to estimate gas price
-  const owner = await client.readContract({
-    address: pushOracleOwner,
-    abi: oracleOwnerAbi,
-    functionName: "owner",
-  })
-  
-  let estimatedGasPrice = BigInt(0)
-  if (legacyChains.includes(chainId)) {
-    const { gasPrice } = await client.estimateFeesPerGas({ type: "legacy" })
-    await Promise.all(args.map(async (arg) => {
-      const estimation = await client.estimateContractGas({
-        account: owner,
-        address: pushOracleOwner,
-        abi: oracleOwnerAbi,
-        functionName: "setPrice",
-        args: arg,
-        gasPrice
-      })
-      estimatedGasPrice += estimation
-    }))
-  } else {
-    const { maxFeePerGas, maxPriorityFeePerGas } = await client.estimateFeesPerGas()
-    await Promise.all(args.map(async (arg) => {
-      const estimation = await client.estimateContractGas({
-        account: owner,
-        address: pushOracleOwner,
-        abi: oracleOwnerAbi,
-        functionName: "setPrice",
-        args: arg,
-        maxFeePerGas,
-        maxPriorityFeePerGas
-      })
-      estimatedGasPrice += estimation
-    }))
-  }
-  console.log({ estimatedGasPrice })
+  // if (estimatedGasPrice > maxGas) {
+  //   console.log("GAS THRESHOLD EXCEEDED")
+  //   return {
+  //     canExec: false,
+  //     callData: []
+  //   }
+  // }
 
-  if (estimatedGasPrice > maxGas) {
-    console.log("GAS THRESHOLD EXCEEDED")
-    return {
-      canExec: false,
-      callData: []
-    }
-  }
+  console.log(BigInt(priceData.shareValueInAssets), BigInt(priceData.assetValueInShares))
 
   // Return execution call data
   console.log("EXECUTING")
   return {
     canExec: true,
-    callData: args.map(arg => {
-      return {
-        to: pushOracleOwner,
+    callData: [
+      {
+        to: owner,
         data: encodeFunctionData({
           abi: oracleOwnerAbi,
-          functionName: 'setPrice',
-          args: arg
-        }),
+          functionName: 'updatePrice',
+          args: [{
+            vault,
+            asset,
+            shareValueInAssets: BigInt(priceData.shareValueInAssets),
+            assetValueInShares: BigInt(priceData.assetValueInShares)
+          }],
+        })
       }
-    })
+    ]
   }
 })
 
 
-const oracleOwnerAbi = [{ "inputs": [{ "internalType": "address", "name": "_oracle", "type": "address" }, { "internalType": "address", "name": "_owner", "type": "address" }], "stateMutability": "nonpayable", "type": "constructor" }, { "inputs": [], "name": "NotKeeperNorOwner", "type": "error" }, { "anonymous": false, "inputs": [{ "indexed": false, "internalType": "address", "name": "previous", "type": "address" }, { "indexed": false, "internalType": "address", "name": "current", "type": "address" }], "name": "KeeperUpdated", "type": "event" }, { "anonymous": false, "inputs": [{ "indexed": false, "internalType": "address", "name": "oldOwner", "type": "address" }, { "indexed": false, "internalType": "address", "name": "newOwner", "type": "address" }], "name": "OwnerChanged", "type": "event" }, { "anonymous": false, "inputs": [{ "indexed": false, "internalType": "address", "name": "newOwner", "type": "address" }], "name": "OwnerNominated", "type": "event" }, { "inputs": [], "name": "acceptOracleOwnership", "outputs": [], "stateMutability": "nonpayable", "type": "function" }, { "inputs": [], "name": "acceptOwnership", "outputs": [], "stateMutability": "nonpayable", "type": "function" }, { "inputs": [], "name": "keeper", "outputs": [{ "internalType": "address", "name": "", "type": "address" }], "stateMutability": "view", "type": "function" }, { "inputs": [{ "internalType": "address", "name": "_owner", "type": "address" }], "name": "nominateNewOwner", "outputs": [], "stateMutability": "nonpayable", "type": "function" }, { "inputs": [], "name": "nominatedOwner", "outputs": [{ "internalType": "address", "name": "", "type": "address" }], "stateMutability": "view", "type": "function" }, { "inputs": [], "name": "oracle", "outputs": [{ "internalType": "contract IPushOracle", "name": "", "type": "address" }], "stateMutability": "view", "type": "function" }, { "inputs": [], "name": "owner", "outputs": [{ "internalType": "address", "name": "", "type": "address" }], "stateMutability": "view", "type": "function" }, { "inputs": [{ "internalType": "address", "name": "_keeper", "type": "address" }], "name": "setKeeper", "outputs": [], "stateMutability": "nonpayable", "type": "function" }, { "inputs": [{ "internalType": "address", "name": "base", "type": "address" }, { "internalType": "address", "name": "quote", "type": "address" }, { "internalType": "uint256", "name": "bqPrice", "type": "uint256" }, { "internalType": "uint256", "name": "qbPrice", "type": "uint256" }], "name": "setPrice", "outputs": [], "stateMutability": "nonpayable", "type": "function" }] as const
+const oracleOwnerAbi = [{ "inputs": [{ "internalType": "address", "name": "_oracle", "type": "address" }, { "internalType": "address", "name": "_owner", "type": "address" }], "stateMutability": "nonpayable", "type": "constructor" }, { "inputs": [], "name": "NotKeeperNorOwner", "type": "error" }, { "anonymous": false, "inputs": [{ "indexed": false, "internalType": "address", "name": "previous", "type": "address" }, { "indexed": false, "internalType": "address", "name": "current", "type": "address" }], "name": "KeeperUpdated", "type": "event" }, { "anonymous": false, "inputs": [{ "indexed": false, "internalType": "address", "name": "vault", "type": "address" }, { "indexed": false, "internalType": "address", "name": "previous", "type": "address" }, { "indexed": false, "internalType": "address", "name": "current", "type": "address" }], "name": "KeeperUpdated", "type": "event" }, { "anonymous": false, "inputs": [{ "indexed": false, "internalType": "address", "name": "vault", "type": "address" }, { "components": [{ "internalType": "uint256", "name": "jump", "type": "uint256" }, { "internalType": "uint256", "name": "drawdown", "type": "uint256" }], "indexed": false, "internalType": "struct Limit", "name": "previous", "type": "tuple" }, { "components": [{ "internalType": "uint256", "name": "jump", "type": "uint256" }, { "internalType": "uint256", "name": "drawdown", "type": "uint256" }], "indexed": false, "internalType": "struct Limit", "name": "current", "type": "tuple" }], "name": "LimitUpdated", "type": "event" }, { "anonymous": false, "inputs": [{ "indexed": false, "internalType": "address", "name": "oldOwner", "type": "address" }, { "indexed": false, "internalType": "address", "name": "newOwner", "type": "address" }], "name": "OwnerChanged", "type": "event" }, { "anonymous": false, "inputs": [{ "indexed": false, "internalType": "address", "name": "newOwner", "type": "address" }], "name": "OwnerNominated", "type": "event" }, { "anonymous": false, "inputs": [{ "indexed": false, "internalType": "address", "name": "vault", "type": "address" }], "name": "VaultAdded", "type": "event" }, { "inputs": [], "name": "acceptOracleOwnership", "outputs": [], "stateMutability": "nonpayable", "type": "function" }, { "inputs": [], "name": "acceptOwnership", "outputs": [], "stateMutability": "nonpayable", "type": "function" }, { "inputs": [{ "internalType": "address", "name": "vault", "type": "address" }], "name": "addVault", "outputs": [], "stateMutability": "nonpayable", "type": "function" }, { "inputs": [{ "internalType": "address", "name": "", "type": "address" }], "name": "highWaterMarks", "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }], "stateMutability": "view", "type": "function" }, { "inputs": [{ "internalType": "address", "name": "", "type": "address" }], "name": "keepers", "outputs": [{ "internalType": "address", "name": "", "type": "address" }], "stateMutability": "view", "type": "function" }, { "inputs": [{ "internalType": "address", "name": "", "type": "address" }], "name": "limits", "outputs": [{ "internalType": "uint256", "name": "jump", "type": "uint256" }, { "internalType": "uint256", "name": "drawdown", "type": "uint256" }], "stateMutability": "view", "type": "function" }, { "inputs": [{ "internalType": "address", "name": "_owner", "type": "address" }], "name": "nominateNewOwner", "outputs": [], "stateMutability": "nonpayable", "type": "function" }, { "inputs": [], "name": "nominatedOwner", "outputs": [{ "internalType": "address", "name": "", "type": "address" }], "stateMutability": "view", "type": "function" }, { "inputs": [], "name": "oracle", "outputs": [{ "internalType": "contract IPushOracle", "name": "", "type": "address" }], "stateMutability": "view", "type": "function" }, { "inputs": [], "name": "owner", "outputs": [{ "internalType": "address", "name": "", "type": "address" }], "stateMutability": "view", "type": "function" }, { "inputs": [{ "internalType": "address", "name": "_vault", "type": "address" }, { "internalType": "address", "name": "_keeper", "type": "address" }], "name": "setKeeper", "outputs": [], "stateMutability": "nonpayable", "type": "function" }, { "inputs": [{ "internalType": "address", "name": "_vault", "type": "address" }, { "components": [{ "internalType": "uint256", "name": "jump", "type": "uint256" }, { "internalType": "uint256", "name": "drawdown", "type": "uint256" }], "internalType": "struct Limit", "name": "_limit", "type": "tuple" }], "name": "setLimit", "outputs": [], "stateMutability": "nonpayable", "type": "function" }, { "inputs": [{ "internalType": "address[]", "name": "_vaults", "type": "address[]" }, { "components": [{ "internalType": "uint256", "name": "jump", "type": "uint256" }, { "internalType": "uint256", "name": "drawdown", "type": "uint256" }], "internalType": "struct Limit[]", "name": "_limits", "type": "tuple[]" }], "name": "setLimits", "outputs": [], "stateMutability": "nonpayable", "type": "function" }, { "inputs": [{ "components": [{ "internalType": "address", "name": "vault", "type": "address" }, { "internalType": "address", "name": "asset", "type": "address" }, { "internalType": "uint256", "name": "shareValueInAssets", "type": "uint256" }, { "internalType": "uint256", "name": "assetValueInShares", "type": "uint256" }], "internalType": "struct OracleVaultController.PriceUpdate", "name": "priceUpdate", "type": "tuple" }], "name": "updatePrice", "outputs": [], "stateMutability": "nonpayable", "type": "function" }, { "inputs": [{ "components": [{ "internalType": "address", "name": "vault", "type": "address" }, { "internalType": "address", "name": "asset", "type": "address" }, { "internalType": "uint256", "name": "shareValueInAssets", "type": "uint256" }, { "internalType": "uint256", "name": "assetValueInShares", "type": "uint256" }], "internalType": "struct OracleVaultController.PriceUpdate[]", "name": "priceUpdates", "type": "tuple[]" }], "name": "updatePrices", "outputs": [], "stateMutability": "nonpayable", "type": "function" }] as const

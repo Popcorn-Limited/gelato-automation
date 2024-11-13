@@ -63,7 +63,9 @@ Web3Function.onRun(async (context: Web3FunctionContext) => {
     functionName: 'prices',
     args: [vault, asset]
   })
-  const newPrice = (price * dailyRate) / parseEther('1') 
+  const newPrice = (price * dailyRate) / parseEther('1')
+
+  console.log({ owner, vault, asset, newPrice, reversePrice: parseEther('1') * parseEther('1') / newPrice })
 
   // Return execution call data
   console.log("EXECUTING")
@@ -76,7 +78,7 @@ Web3Function.onRun(async (context: Web3FunctionContext) => {
           abi: oracleOwnerAbi,
           functionName: 'updatePrice',
           args: [{ vault, asset, shareValueInAssets: newPrice, assetValueInShares: parseEther('1') * parseEther('1') / newPrice }]
-        }),
+        })
       }
     ]
   }
