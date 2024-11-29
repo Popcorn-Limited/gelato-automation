@@ -64,10 +64,17 @@ const DEBANK_CHAIN_IDS: { [key: number]: string } = {
   [43114]: `avax`
 }
 
+type Configuration = {
+  vault: Address,
+  asset: Address,
+  safes: Address[],
+  chainIds: number[]
+}
+
 // @ts-ignore
 Web3Function.onRun(async (context: Web3FunctionContext) => {
-  const vaultAddresses = (await context.secrets.get("VAULTS") || "").split(",");
-  const vaults = vaultAddresses.map(vault => getAddress(vault));
+  const configurations = JSON.parse(await context.secrets.get("CONFIGURATION") || "[]") as Configuration[];
+
   const controller = getAddress(await context.secrets.get("CONTROLLER") || zeroAddress);
   const alchemyKey = await context.secrets.get("ALCHEMY_KEY") || "";
   const debankKey = await context.secrets.get("DEBANK_KEY") || "";
@@ -82,7 +89,7 @@ Web3Function.onRun(async (context: Web3FunctionContext) => {
   });
 
   console.log("GETTING SAFE VAULT PRICES")
-  const vaultPrices = await Promise.all(vaults.map(vault => getSafeVaultPrice({ vault, chainId, client, debankKey, defillamaKey })))
+  const vaultPrices = await Promise.all(configurations.map(configuration => getSafeVaultPrice({ configuration, chainId, client, debankKey, defillamaKey })))
   const priceUpdates = vaultPrices.filter(price => price.totalValueUSD > 0)
 
   // Return execution call data
@@ -111,66 +118,43 @@ Web3Function.onRun(async (context: Web3FunctionContext) => {
 })
 
 async function getSafeVaultPrice({
-  vault,
+  configuration,
   chainId,
   client,
   debankKey,
   defillamaKey
 }: {
-  vault: Address,
+  configuration: Configuration,
   chainId: number,
   client: PublicClient,
   debankKey: string,
   defillamaKey: string
 }) {
   const vaultData = await client.multicall({
-    contracts: [{
-      address: vault,
-      abi: erc4626Abi,
-      functionName: "asset"
-    },
-    {
-      address: vault,
-      abi: [{ "inputs": [], "name": "safe", "outputs": [{ "internalType": "address", "name": "", "type": "address" }], "stateMutability": "view", "type": "function" }],
-      functionName: "safe"
-    },
-    {
-      address: vault,
-      abi: erc20Abi,
-      functionName: "totalSupply"
-    },
-    {
-      address: vault,
-      abi: erc20Abi,
-      functionName: "decimals"
-    }],
+    contracts: [
+      {
+        address: configuration.vault,
+        abi: erc20Abi,
+        functionName: "totalSupply"
+      },
+      {
+        address: configuration.asset,
+        abi: erc20Abi,
+        functionName: "decimals"
+      }],
     allowFailure: false
   })
-  const asset = vaultData[0]
-  const safe = vaultData[1]
-  const totalSupply = vaultData[2]
-  const decimals = vaultData[3]
+  const totalSupply = vaultData[0]
+  const decimals = vaultData[1]
 
   // Get Holdings
-  const { data: holdingsData } = await axios.get(
-    'https://pro-openapi.debank.com/v1/user/chain_balance',
-    {
-      params: {
-        id: safe,
-        chain_id: DEBANK_CHAIN_IDS[chainId]
-      },
-      headers: {
-        'accept': 'application/json',
-        'AccessKey': debankKey
-      }
-    }
-  );
-  const totalValueUSD = holdingsData.usd_value
+  const safeHoldings = await Promise.all(configuration.chainIds.map(async (chain) => await getSafeHoldings({ safes: configuration.safes, chainId: chain, debankKey })))
+  const totalValueUSD = safeHoldings.reduce((acc, curr) => acc + curr, 0)
 
   if (totalValueUSD === 0) {
     return {
-      vault,
-      asset,
+      vault: configuration.vault,
+      asset: configuration.asset,
       shareValueInAssets: parseEther('1'),
       assetValueInShares: parseEther('1'),
       totalValueUSD,
@@ -181,9 +165,9 @@ async function getSafeVaultPrice({
 
   // Get Asset Price
   const { data: priceData } = await axios.get(
-    `https://pro-api.llama.fi/${defillamaKey}/coins/prices/current/${networkMap[chainId]}:${asset}?searchWidth=4h`
+    `https://pro-api.llama.fi/${defillamaKey}/coins/prices/current/${networkMap[chainId]}:${configuration.asset}?searchWidth=4h`
   );
-  const assetValueUSD = priceData.coins[`${networkMap[chainId]}:${asset}`].price
+  const assetValueUSD = priceData.coins[`${networkMap[chainId]}:${configuration.asset}`].price
 
   const totalValueInAssets = totalValueUSD / assetValueUSD
   const formattedTotalSupply = Number(formatUnits(totalSupply, decimals))
@@ -191,14 +175,43 @@ async function getSafeVaultPrice({
   const newPrice = parseUnits(String(vaultPrice), 18)
 
   return {
-    vault,
-    asset,
+    vault: configuration.vault,
+    asset: configuration.asset,
     shareValueInAssets: newPrice,
     assetValueInShares: parseEther('1') * parseEther('1') / newPrice,
     totalValueUSD,
     formattedTotalSupply,
     vaultPriceUSD: vaultPrice,
   }
+}
+
+
+async function getSafeHoldings({
+  safes,
+  chainId,
+  debankKey,
+}: {
+  safes: Address[],
+  chainId: number,
+  debankKey: string
+}): Promise<number> {
+  const holdings = await Promise.all(safes.map(async (safe) => {
+    const { data: holdingsData } = await axios.get(
+      'https://pro-openapi.debank.com/v1/user/chain_balance',
+      {
+        params: {
+          id: safe,
+          chain_id: DEBANK_CHAIN_IDS[chainId]
+        },
+        headers: {
+          'accept': 'application/json',
+          'AccessKey': debankKey
+        }
+      }
+    );
+    return holdingsData.usd_value
+  }))
+  return holdings.reduce((acc, curr) => acc + curr, 0)
 }
 
 
