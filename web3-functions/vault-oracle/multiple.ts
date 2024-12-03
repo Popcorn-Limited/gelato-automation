@@ -68,7 +68,14 @@ type Configuration = {
   vault: Address,
   asset: Address,
   safes: Address[],
-  chainIds: number[]
+  chainIds: number[],
+  hyperliquid: HyperliquidConfig
+}
+
+type HyperliquidConfig = {
+  spot: boolean,
+  perp: boolean,
+  vaults: Address[]
 }
 
 // @ts-ignore
@@ -149,7 +156,8 @@ async function getSafeVaultPrice({
 
   // Get Holdings
   const safeHoldings = await Promise.all(configuration.chainIds.map(async (chain) => await getSafeHoldings({ safes: configuration.safes, chainId: chain, debankKey })))
-  const totalValueUSD = safeHoldings.reduce((acc, curr) => acc + curr, 0)
+  const hyperliquidAccountValue = await getHyperliquidAccountValue({ user: configuration.safes[0], config: configuration.hyperliquid })
+  const totalValueUSD = hyperliquidAccountValue + safeHoldings.reduce((acc, curr) => acc + curr, 0)
 
   if (totalValueUSD === 0) {
     return {
@@ -214,5 +222,46 @@ async function getSafeHoldings({
   return holdings.reduce((acc, curr) => acc + curr, 0)
 }
 
+async function getHyperliquidAccountValue({
+  user,
+  config
+}: {
+  user: Address,
+  config: HyperliquidConfig
+}) {
+  let perpValue = 0
+  if (config.perp) {
+    const { data: clearinghouseStateUser } = await axios.post("https://api.hyperliquid.xyz/info", {
+      type: "clearinghouseState",
+      user,
+      headers: { "Content-Type": "application/json" },
+    });
+    perpValue = Number(clearinghouseStateUser.marginSummary.accountValue)
+  }
+
+  let vaultValue = 0;
+  if (config.vaults.length > 0) {
+    const vaultHoldings = await Promise.all(config.vaults.map(vaultAddress => getHyperliquidVaultHolding({ user, vaultAddress })))
+    vaultValue = vaultHoldings.reduce((acc, curr) => acc + curr, 0)
+  }
+
+  return vaultValue + perpValue
+}
+
+async function getHyperliquidVaultHolding({
+  user,
+  vaultAddress
+}: {
+  user: Address,
+  vaultAddress: Address
+}): Promise<number> {
+  const { data: vaultDetails } = await axios.post("https://api-ui.hyperliquid.xyz/info", {
+    type: "vaultDetails",
+    user,
+    vaultAddress,
+    headers: { "Content-Type": "application/json" },
+  });
+  return Number(vaultDetails.maxWithdrawable)
+}
 
 const oracleOwnerAbi = [{ "inputs": [{ "internalType": "address", "name": "_oracle", "type": "address" }, { "internalType": "address", "name": "_owner", "type": "address" }], "stateMutability": "nonpayable", "type": "constructor" }, { "inputs": [], "name": "NotKeeperNorOwner", "type": "error" }, { "anonymous": false, "inputs": [{ "indexed": false, "internalType": "address", "name": "previous", "type": "address" }, { "indexed": false, "internalType": "address", "name": "current", "type": "address" }], "name": "KeeperUpdated", "type": "event" }, { "anonymous": false, "inputs": [{ "indexed": false, "internalType": "address", "name": "vault", "type": "address" }, { "indexed": false, "internalType": "address", "name": "previous", "type": "address" }, { "indexed": false, "internalType": "address", "name": "current", "type": "address" }], "name": "KeeperUpdated", "type": "event" }, { "anonymous": false, "inputs": [{ "indexed": false, "internalType": "address", "name": "vault", "type": "address" }, { "components": [{ "internalType": "uint256", "name": "jump", "type": "uint256" }, { "internalType": "uint256", "name": "drawdown", "type": "uint256" }], "indexed": false, "internalType": "struct Limit", "name": "previous", "type": "tuple" }, { "components": [{ "internalType": "uint256", "name": "jump", "type": "uint256" }, { "internalType": "uint256", "name": "drawdown", "type": "uint256" }], "indexed": false, "internalType": "struct Limit", "name": "current", "type": "tuple" }], "name": "LimitUpdated", "type": "event" }, { "anonymous": false, "inputs": [{ "indexed": false, "internalType": "address", "name": "oldOwner", "type": "address" }, { "indexed": false, "internalType": "address", "name": "newOwner", "type": "address" }], "name": "OwnerChanged", "type": "event" }, { "anonymous": false, "inputs": [{ "indexed": false, "internalType": "address", "name": "newOwner", "type": "address" }], "name": "OwnerNominated", "type": "event" }, { "anonymous": false, "inputs": [{ "indexed": false, "internalType": "address", "name": "vault", "type": "address" }], "name": "VaultAdded", "type": "event" }, { "inputs": [], "name": "acceptOracleOwnership", "outputs": [], "stateMutability": "nonpayable", "type": "function" }, { "inputs": [], "name": "acceptOwnership", "outputs": [], "stateMutability": "nonpayable", "type": "function" }, { "inputs": [{ "internalType": "address", "name": "vault", "type": "address" }], "name": "addVault", "outputs": [], "stateMutability": "nonpayable", "type": "function" }, { "inputs": [{ "internalType": "address", "name": "", "type": "address" }], "name": "highWaterMarks", "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }], "stateMutability": "view", "type": "function" }, { "inputs": [{ "internalType": "address", "name": "", "type": "address" }], "name": "keepers", "outputs": [{ "internalType": "address", "name": "", "type": "address" }], "stateMutability": "view", "type": "function" }, { "inputs": [{ "internalType": "address", "name": "", "type": "address" }], "name": "limits", "outputs": [{ "internalType": "uint256", "name": "jump", "type": "uint256" }, { "internalType": "uint256", "name": "drawdown", "type": "uint256" }], "stateMutability": "view", "type": "function" }, { "inputs": [{ "internalType": "address", "name": "_owner", "type": "address" }], "name": "nominateNewOwner", "outputs": [], "stateMutability": "nonpayable", "type": "function" }, { "inputs": [], "name": "nominatedOwner", "outputs": [{ "internalType": "address", "name": "", "type": "address" }], "stateMutability": "view", "type": "function" }, { "inputs": [], "name": "oracle", "outputs": [{ "internalType": "contract IPushOracle", "name": "", "type": "address" }], "stateMutability": "view", "type": "function" }, { "inputs": [], "name": "owner", "outputs": [{ "internalType": "address", "name": "", "type": "address" }], "stateMutability": "view", "type": "function" }, { "inputs": [{ "internalType": "address", "name": "_vault", "type": "address" }, { "internalType": "address", "name": "_keeper", "type": "address" }], "name": "setKeeper", "outputs": [], "stateMutability": "nonpayable", "type": "function" }, { "inputs": [{ "internalType": "address", "name": "_vault", "type": "address" }, { "components": [{ "internalType": "uint256", "name": "jump", "type": "uint256" }, { "internalType": "uint256", "name": "drawdown", "type": "uint256" }], "internalType": "struct Limit", "name": "_limit", "type": "tuple" }], "name": "setLimit", "outputs": [], "stateMutability": "nonpayable", "type": "function" }, { "inputs": [{ "internalType": "address[]", "name": "_vaults", "type": "address[]" }, { "components": [{ "internalType": "uint256", "name": "jump", "type": "uint256" }, { "internalType": "uint256", "name": "drawdown", "type": "uint256" }], "internalType": "struct Limit[]", "name": "_limits", "type": "tuple[]" }], "name": "setLimits", "outputs": [], "stateMutability": "nonpayable", "type": "function" }, { "inputs": [{ "components": [{ "internalType": "address", "name": "vault", "type": "address" }, { "internalType": "address", "name": "asset", "type": "address" }, { "internalType": "uint256", "name": "shareValueInAssets", "type": "uint256" }, { "internalType": "uint256", "name": "assetValueInShares", "type": "uint256" }], "internalType": "struct OracleVaultController.PriceUpdate", "name": "priceUpdate", "type": "tuple" }], "name": "updatePrice", "outputs": [], "stateMutability": "nonpayable", "type": "function" }, { "inputs": [{ "components": [{ "internalType": "address", "name": "vault", "type": "address" }, { "internalType": "address", "name": "asset", "type": "address" }, { "internalType": "uint256", "name": "shareValueInAssets", "type": "uint256" }, { "internalType": "uint256", "name": "assetValueInShares", "type": "uint256" }], "internalType": "struct OracleVaultController.PriceUpdate[]", "name": "priceUpdates", "type": "tuple[]" }], "name": "updatePrices", "outputs": [], "stateMutability": "nonpayable", "type": "function" }] as const
